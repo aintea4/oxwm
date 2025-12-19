@@ -1,3 +1,4 @@
+use oxwm::errors::MainError;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -7,24 +8,21 @@ static TEMPLATE: &str = include_str!("../../templates/config.lua");
 enum Args {
     Exit,
     Arguments(Vec<String>),
-    Error(String),
+    Error(MainError),
 }
 
-fn main() {
+fn main() -> Result<(), MainError> {
     let arguments = match process_args() {
-        Args::Exit => return,
+        Args::Exit => return Ok(()),
         Args::Arguments(v) => v,
-        Args::Error(e) => panic!("Error: Could not get valid arguments:\n{}", e),
+        Args::Error(e) => return Err(e),
     };
 
-    let (config, had_broken_config) = match load_config(arguments.get(2)) {
-        Ok((c, hbc)) => (c, hbc),
-        Err(e) => panic!("Error: Could not load config:\n{}", e),
-    };
+    let (config, had_broken_config) = load_config(arguments.get(2))?;
 
     let mut window_manager = match oxwm::window_manager::WindowManager::new(config) {
         Ok(wm) => wm,
-        Err(e) => panic!("Error: Could not start window manager:\n{}", e),
+        Err(e) => return Err(MainError::CouldNotStartWm(e)),
     };
 
     if had_broken_config {
@@ -33,7 +31,7 @@ fn main() {
 
     let should_restart = match window_manager.run() {
         Ok(sr) => sr,
-        Err(e) => panic!("Error: Could not determine restart\n{}", e),
+        Err(e) => return Err(MainError::BadRestartStatus(e)),
     };
 
     drop(window_manager);
@@ -45,23 +43,24 @@ fn main() {
             .exec();
         eprintln!("Error: Failed to restart: {}", error);
     }
+    Ok(())
 }
 
-fn load_config(
-    config_path: Option<&String>,
-) -> Result<(oxwm::Config, bool), Box<dyn std::error::Error>> {
+fn load_config(config_path: Option<&String>) -> Result<(oxwm::Config, bool), MainError> {
     let path = match config_path {
         None => {
-            let config_path = get_config_path().join(CONFIG_FILE);
-            check_convert(&config_path)
-                .map_err(|error| format!("Error: Failed to check old config:\n{}", error))?;
+            let config_dir = get_config_path()?;
+            let config_path = config_dir.join(CONFIG_FILE);
+            check_convert(&config_path)?;
             config_path
         }
         Some(p) => PathBuf::from(p),
     };
 
-    let config_string = std::fs::read_to_string(&path)
-        .map_err(|error| format!("Error: Failed to read config file:\n{}", error))?;
+    let config_string = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return Err(MainError::FailedReadConfig(e)),
+    };
 
     let config_directory = path.parent();
 
@@ -69,9 +68,10 @@ fn load_config(
         match oxwm::config::parse_lua_config(&config_string, config_directory) {
             Ok(config) => (config, false),
             Err(_error) => {
-                let config = oxwm::config::parse_lua_config(TEMPLATE, None).map_err(|error| {
-                    format!("Error: Failed to parse default template config:\n{}", error)
-                })?;
+                let config = match oxwm::config::parse_lua_config(TEMPLATE, None) {
+                    Ok(c) => c,
+                    Err(e) => return Err(MainError::FailedReadConfigTemplate(e)),
+                };
                 (config, true)
             }
         };
@@ -79,13 +79,17 @@ fn load_config(
     Ok((config, had_broken_config))
 }
 
-fn init_config() -> Result<(), Box<dyn std::error::Error>> {
-    let config_directory = get_config_path();
-    std::fs::create_dir_all(&config_directory)?;
+fn init_config() -> Result<(), MainError> {
+    let config_directory = get_config_path()?;
+    if let Err(e) = std::fs::create_dir_all(&config_directory) {
+        return Err(MainError::CouldNotCreateConfigDir(e));
+    }
 
     let config_template = TEMPLATE;
     let config_path = config_directory.join(CONFIG_FILE);
-    std::fs::write(&config_path, config_template)?;
+    if let Err(e) = std::fs::write(&config_path, config_template) {
+        return Err(MainError::CouldNotWriteConfig(e));
+    }
 
     println!("✓ Config created at {:?}", config_path);
     println!("  Edit the file and reload with Mod+Shift+R");
@@ -94,10 +98,11 @@ fn init_config() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_config_path() -> PathBuf {
-    dirs::config_dir()
-        .expect("Could not find config directory")
-        .join("oxwm")
+fn get_config_path() -> Result<PathBuf, MainError> {
+    match dirs::config_dir() {
+        Some(p) => Ok(p.join("oxwm")),
+        None => Err(MainError::NoConfigDir),
+    }
 }
 
 fn print_help() {
@@ -123,7 +128,7 @@ fn process_args() -> Args {
     let mut args = std::env::args();
     let name = match args.next() {
         Some(n) => n,
-        None => return Args::Error("Error: Program name can't be extracted from args".to_string()),
+        None => return Args::Error(MainError::NoProgramName),
     };
     let switch = args.next();
     let path = args.next();
@@ -144,35 +149,35 @@ fn process_args() -> Args {
         }
         "--init" => match init_config() {
             Ok(_) => Args::Exit,
-            Err(e) => Args::Error(format!("Error: Failed to create default config:\n{e}")),
+            Err(e) => Args::Error(e),
         },
         "--config" => match check_custom_config(path) {
             Ok(p) => Args::Arguments(vec![name, switch, p]),
             Err(e) => Args::Error(e),
         },
-        _ => Args::Error(format!("Error: {switch} is an unknown argument")),
+        _ => Args::Error(MainError::InvalidArguments),
     }
 }
 
-fn check_custom_config(path: Option<String>) -> Result<String, String> {
+fn check_custom_config(path: Option<String>) -> Result<String, MainError> {
     let path = match path {
         Some(p) => p,
         None => {
-            return Err("Error: --config requires a valid path argument".to_string());
+            return Err(MainError::NoConfigPath);
         }
     };
 
     match std::fs::exists(&path) {
         Ok(b) => match b {
             true => Ok(path),
-            false => Err(format!("Error: {path} does not exist")),
+            false => Err(MainError::BadConfigPath),
         },
-        Err(e) => Err(format!("Error: Failed to check config exists:\n{e}")),
+        Err(e) => Err(MainError::FailedCheckExist(e)),
     }
 }
 
-fn check_convert(path: &Path) -> Result<(), &str> {
-    let config_directory = get_config_path();
+fn check_convert(path: &Path) -> Result<(), MainError> {
+    let config_directory = get_config_path()?;
 
     if !path.exists() {
         let ron_path = config_directory.join("config.ron");
@@ -180,9 +185,7 @@ fn check_convert(path: &Path) -> Result<(), &str> {
 
         println!("No config found at {:?}", config_directory);
         println!("Creating default Lua config...");
-        if init_config().is_err() {
-            return Err("Error: Failed to create default lua");
-        }
+        init_config()?;
 
         if had_ron_config {
             println!("\n NOTICE: OXWM has migrated to Lua configuration.");

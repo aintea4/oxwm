@@ -312,16 +312,7 @@ impl WindowManager {
         Ok(window_manager)
     }
 
-    pub fn show_migration_overlay(&mut self) {
-        let message = "We are on version 0.8.0 now.\n\n\
-                       Your config file has been deprecated once again.\n\
-                       Backup your current config, and run oxwm --init to generate a new one with correct values.\n\n\
-                       Please reach out to Tony, or check out the\n\
-                       documentation for help with migration.\n\n\
-                       We appreciate you testing oxwm!\n\n\
-                       Press Mod+Shift+/ to see keybinds\n\
-                       Press Mod+Shift+R to reload after fixing your config";
-
+    pub fn show_startup_config_error(&mut self, error: &str) {
         let monitor = &self.monitors[self.selected_monitor];
         let monitor_x = monitor.screen_x as i16;
         let monitor_y = monitor.screen_y as i16;
@@ -331,13 +322,13 @@ impl WindowManager {
         if let Err(e) = self.overlay.show_error(
             &self.connection,
             &self.font,
-            message,
+            error,
             monitor_x,
             monitor_y,
             screen_width,
             screen_height,
         ) {
-            eprintln!("Failed to show migration overlay: {:?}", e);
+            eprintln!("Failed to show config error overlay: {:?}", e);
         }
     }
 

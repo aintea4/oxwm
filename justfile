@@ -8,6 +8,9 @@ install: build
     @echo "✓ oxwm installed to /usr/bin/oxwm"
     @echo "  Run 'oxwm --init' to create your config"
 
+checkinstall:
+	checkinstall --pkgname oxwm --exclude /root -y just install
+
 uninstall:
     rm -f /usr/bin/oxwm
     @echo "✓ oxwm uninstalled"

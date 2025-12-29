@@ -28,6 +28,9 @@ pub struct Bar {
     scheme_occupied: crate::ColorScheme,
     scheme_selected: crate::ColorScheme,
     scheme_urgent: crate::ColorScheme,
+    hide_vacant_tags: bool,
+    last_occupied_tags: u32,
+    last_current_tags: u32,
 }
 
 impl Bar {
@@ -129,6 +132,9 @@ impl Bar {
             scheme_occupied: config.scheme_occupied,
             scheme_selected: config.scheme_selected,
             scheme_urgent: config.scheme_urgent,
+            hide_vacant_tags: config.hide_vacant_tags,
+            last_occupied_tags: 0,
+            last_current_tags: 0,
         })
     }
 
@@ -206,6 +212,9 @@ impl Bar {
             x11::xlib::XFreeGC(display, gc);
         }
 
+        self.last_occupied_tags = occupied_tags;
+        self.last_current_tags = current_tags;
+
         let mut x_position: i16 = 0;
 
         for (tag_index, tag) in self.tags.iter().enumerate() {
@@ -213,6 +222,10 @@ impl Bar {
             let is_selected = (current_tags & tag_mask) != 0;
             let is_occupied = (occupied_tags & tag_mask) != 0;
             let is_urgent = (urgent_tags & tag_mask) != 0;
+
+            if self.hide_vacant_tags && !is_occupied && !is_selected {
+                continue;
+            }
 
             let tag_width = self.tag_widths[tag_index];
 
@@ -374,6 +387,14 @@ impl Bar {
         let mut current_x_position = 0;
 
         for (tag_index, &tag_width) in self.tag_widths.iter().enumerate() {
+            let tag_mask = 1 << tag_index;
+            let is_selected = (self.last_current_tags & tag_mask) != 0;
+            let is_occupied = (self.last_occupied_tags & tag_mask) != 0;
+
+            if self.hide_vacant_tags && !is_occupied && !is_selected {
+                continue;
+            }
+
             if click_x >= current_x_position && click_x < current_x_position + tag_width as i16 {
                 return Some(tag_index);
             }
@@ -406,6 +427,7 @@ impl Bar {
         self.scheme_occupied = config.scheme_occupied;
         self.scheme_selected = config.scheme_selected;
         self.scheme_urgent = config.scheme_urgent;
+        self.hide_vacant_tags = config.hide_vacant_tags;
 
         self.status_text.clear();
         self.needs_redraw = true;

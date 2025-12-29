@@ -35,6 +35,7 @@ oxwm.set_terminal("st")
 oxwm.set_modkey(modkey)
 oxwm.set_tags({ "1", "2", "3", "4", "5", "6", "7", "8", "9" })
 oxwm.auto_tile(true);
+oxwm.bar.set_hide_vacant_tags(true);
 
 oxwm.set_layout_symbol("tiling", "[T]")
 oxwm.set_layout_symbol("normie", "[F]")

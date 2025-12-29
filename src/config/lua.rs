@@ -51,6 +51,7 @@ pub fn parse_lua_config(
         scheme_urgent: builder_data.scheme_urgent,
         autostart: builder_data.autostart,
         auto_tile: builder_data.auto_tile,
+        hide_vacant_tags: builder_data.hide_vacant_tags,
         path: None,
     })
 }

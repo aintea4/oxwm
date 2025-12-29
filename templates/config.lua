@@ -172,6 +172,9 @@ oxwm.bar.set_scheme_selected(colors.cyan, colors.bg, colors.purple)
 -- Urgent tags (windows requesting attention)
 oxwm.bar.set_scheme_urgent(colors.red, colors.bg, colors.red)
 
+-- Hide tags that have no windows and are not selected
+-- oxwm.bar.set_hide_vacant_tags(true)
+
 -------------------------------------------------------------------------------
 -- Keybindings
 -------------------------------------------------------------------------------

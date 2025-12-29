@@ -315,6 +315,10 @@ function oxwm.bar.set_scheme_selected(foreground, background, underline) end
 ---@param underline string|integer Underline color
 function oxwm.bar.set_scheme_urgent(foreground, background, underline) end
 
+---Hide tags that have no windows and are not currently selected
+---@param hide boolean Whether to hide vacant tags
+function oxwm.bar.set_hide_vacant_tags(hide) end
+
 ---Add an autostart command
 ---@param cmd string Command to run at startup
 function oxwm.autostart(cmd) end

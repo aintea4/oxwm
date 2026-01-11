@@ -35,6 +35,7 @@ pub struct ConfigBuilder {
     pub scheme_urgent: ColorScheme,
     pub autostart: Vec<String>,
     pub auto_tile: bool,
+    pub hide_vacant_tags: bool,
 }
 
 impl Default for ConfigBuilder {
@@ -80,6 +81,7 @@ impl Default for ConfigBuilder {
             },
             autostart: Vec::new(),
             auto_tile: false,
+            hide_vacant_tags: false,
         }
     }
 }
@@ -398,6 +400,7 @@ fn register_rule_module(
         let title: Option<String> = config.get("title").ok();
         let is_floating: Option<bool> = config.get("floating").ok();
         let monitor: Option<usize> = config.get("monitor").ok();
+        let focus: Option<bool> = config.get("focus").ok();
 
         let tags: Option<u32> = if let Ok(tag_index) = config.get::<i32>("tag") {
             if tag_index > 0 {
@@ -414,6 +417,7 @@ fn register_rule_module(
             instance,
             title,
             tags,
+            focus,
             is_floating,
             monitor,
         };
@@ -734,6 +738,12 @@ fn register_bar_module(
             Ok(())
         })?;
 
+    let builder_clone = builder.clone();
+    let set_hide_vacant_tags = lua.create_function(move |_, hide: bool| {
+        builder_clone.borrow_mut().hide_vacant_tags = hide;
+        Ok(())
+    })?;
+
     bar_table.set("set_font", set_font)?;
     bar_table.set("block", block_table)?;
     bar_table.set("add_block", add_block)?; // Deprecated, for backwards compatibility
@@ -742,6 +752,7 @@ fn register_bar_module(
     bar_table.set("set_scheme_occupied", set_scheme_occupied)?;
     bar_table.set("set_scheme_selected", set_scheme_selected)?;
     bar_table.set("set_scheme_urgent", set_scheme_urgent)?;
+    bar_table.set("set_hide_vacant_tags", set_hide_vacant_tags)?;
     parent.set("bar", bar_table)?;
     Ok(())
 }

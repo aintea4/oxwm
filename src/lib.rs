@@ -35,6 +35,7 @@ pub struct WindowRule {
     pub instance: Option<String>,
     pub title: Option<String>,
     pub tags: Option<u32>,
+    pub focus: Option<bool>,
     pub is_floating: Option<bool>,
     pub monitor: Option<usize>,
 }
@@ -104,6 +105,7 @@ pub struct Config {
 
     pub autostart: Vec<String>,
     pub auto_tile: bool,
+    pub hide_vacant_tags: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -354,6 +356,7 @@ impl Default for Config {
             },
             autostart: vec![],
             auto_tile: false,
+            hide_vacant_tags: false,
         }
     }
 }

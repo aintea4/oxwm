@@ -29,6 +29,9 @@ pub enum ConfigError {
     UnknownBlockCommand(String),
     MissingCommandArg { command: String, field: String },
     ValidationError(String),
+    NoConfigPathSet,
+    NoConfigAtPath,
+    CouldNotReadConfig(std::io::Error),
 }
 
 #[derive(Debug)]
@@ -38,6 +41,21 @@ pub enum BlockError {
     MissingFile(String),
     InvalidData(String),
     CommandFailed(String),
+}
+
+pub enum MainError {
+    CouldNotCreateConfigDir(std::io::Error),
+    CouldNotWriteConfig(std::io::Error),
+    FailedCheckExist(std::io::Error),
+    FailedReadConfig(std::io::Error),
+    FailedReadConfigTemplate(ConfigError),
+    CouldNotStartWm(WmError),
+    WmError(WmError),
+    BadConfigPath,
+    NoConfigPath,
+    InvalidArguments,
+    NoProgramName,
+    NoConfigDir,
 }
 
 impl std::fmt::Display for WmError {
@@ -56,8 +74,6 @@ impl std::fmt::Display for WmError {
     }
 }
 
-impl std::error::Error for WmError {}
-
 impl std::fmt::Display for X11Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -72,8 +88,6 @@ impl std::fmt::Display for X11Error {
     }
 }
 
-impl std::error::Error for X11Error {}
-
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -86,11 +100,15 @@ impl std::fmt::Display for ConfigError {
                 write!(f, "{} command requires {}", command, field)
             }
             Self::ValidationError(msg) => write!(f, "{}", msg),
+            Self::NoConfigPathSet => write!(
+                f,
+                "Could not find config file. Config path should've been set while loading"
+            ),
+            Self::NoConfigAtPath => write!(f, "Could not find config file, has it been moved?"),
+            Self::CouldNotReadConfig(e) => write!(f, "Could not read config: {e}"),
         }
     }
 }
-
-impl std::error::Error for ConfigError {}
 
 impl std::fmt::Display for BlockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -103,8 +121,6 @@ impl std::fmt::Display for BlockError {
         }
     }
 }
-
-impl std::error::Error for BlockError {}
 
 impl<T: Into<X11Error>> From<T> for WmError {
     fn from(value: T) -> Self {
@@ -179,5 +195,27 @@ pub trait LuaResultExt<T> {
 impl<T> LuaResultExt<T> for Result<T, mlua::Error> {
     fn lua_context(self, context: &str) -> Result<T, ConfigError> {
         self.map_err(|e| ConfigError::LuaError(format!("{}: {}", context, e)))
+    }
+}
+
+impl std::fmt::Debug for MainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use MainError::*;
+
+        match self {
+            CouldNotCreateConfigDir(e)
+            | CouldNotWriteConfig(e)
+            | FailedCheckExist(e)
+            | FailedReadConfig(e) => {
+                write!(f, "{e}")
+            }
+            FailedReadConfigTemplate(e) => write!(f, "{e}"),
+            CouldNotStartWm(e) | WmError(e) => write!(f, "{e}"),
+            BadConfigPath => write!(f, "Given config path does not exist"),
+            NoConfigPath => write!(f, "The --config switch requires a path value"),
+            InvalidArguments => write!(f, "The arguments given are invalid try --help"),
+            NoProgramName => write!(f, "Could not get the program name from the environment"),
+            NoConfigDir => write!(f, "Could not get the config dir"),
+        }
     }
 }

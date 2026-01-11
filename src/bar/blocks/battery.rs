@@ -1,6 +1,7 @@
 use super::Block;
 use crate::errors::BlockError;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub struct Battery {
@@ -12,6 +13,39 @@ pub struct Battery {
     battery_path: String,
 }
 
+fn detect_battery_name() -> Option<String> {
+    let base = Path::new("/sys/class/power_supply");
+    let entries = fs::read_dir(base).ok()?;
+
+    for entry in entries.flatten() {
+        let path: PathBuf = entry.path();
+
+        let type_path = path.join("type");
+        let present_path = path.join("present");
+
+        let is_battery = fs::read_to_string(&type_path)
+            .map(|s| s.trim() == "Battery")
+            .unwrap_or(false);
+
+        let is_present = fs::read_to_string(&present_path)
+            .map(|s| s.trim() == "1")
+            .unwrap_or(true);
+
+        let is_device_scope = fs::read_to_string(path.join("scope"))
+            .map(|s| s.trim().eq_ignore_ascii_case("device"))
+            .unwrap_or(false);
+
+        if !is_battery || !is_present || is_device_scope {
+            continue;
+        }
+
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
 impl Battery {
     pub fn new(
         format_charging: &str,
@@ -21,16 +55,17 @@ impl Battery {
         color: u32,
         battery_name: Option<String>,
     ) -> Self {
+        let name = battery_name
+            .or_else(detect_battery_name)
+            .unwrap_or_else(|| "BAT0".to_string());
+
         Self {
             format_charging: format_charging.to_string(),
             format_discharging: format_discharging.to_string(),
             format_full: format_full.to_string(),
             interval: Duration::from_secs(interval_secs),
             color,
-            battery_path: format!(
-                "/sys/class/power_supply/{}",
-                battery_name.unwrap_or_else(|| "BAT0".to_string())
-            ),
+            battery_path: format!("/sys/class/power_supply/{}", name),
         }
     }
 

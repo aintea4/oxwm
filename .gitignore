@@ -1,12 +1,10 @@
-# Rust / Cargo
-target/
+# Zig
+zig-out/
+.zig-cache/
 .direnv/
 
 # Nix
 result
-
-# User config
-src/config.rs
 
 # Notes
 notes/

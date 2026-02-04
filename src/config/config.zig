@@ -36,9 +36,14 @@ pub const Action = enum {
     scroll_right,
 };
 
+pub const Key_Press = struct {
+    mod_mask: u32 = 0,
+    keysym: u64 = 0,
+};
+
 pub const Keybind = struct {
-    mod_mask: u32,
-    keysym: u64,
+    keys: [4]Key_Press = [_]Key_Press{.{}} ** 4,
+    key_count: u8 = 1,
     action: Action,
     int_arg: i32 = 0,
     str_arg: ?[]const u8 = null,

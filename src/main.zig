@@ -13,6 +13,7 @@ const bar_mod = @import("bar/bar.zig");
 const blocks_mod = @import("bar/blocks/blocks.zig");
 const config_mod = @import("config/config.zig");
 const lua = @import("config/lua.zig");
+const overlay_mod = @import("overlay.zig");
 
 const Display = display_mod.Display;
 const Client = client_mod.Client;
@@ -67,6 +68,87 @@ var config_path_global: ?[]const u8 = null;
 var scroll_animation: animations.Scroll_Animation = .{};
 var animation_config: animations.Animation_Config = .{ .duration_ms = 150, .easing = .ease_out };
 
+var chord_keys: [4]config_mod.Key_Press = [_]config_mod.Key_Press{.{}} ** 4;
+var chord_index: u8 = 0;
+var chord_timestamp: i64 = 0;
+const chord_timeout_ms: i64 = 1000;
+var keyboard_grabbed: bool = false;
+
+var keybind_overlay: ?*overlay_mod.Keybind_Overlay = null;
+
+fn print_help() void {
+    std.debug.print(
+        \\oxwm - A window manager
+        \\
+        \\USAGE:
+        \\    oxwm [OPTIONS]
+        \\
+        \\OPTIONS:
+        \\    --init              Create default config in ~/.config/oxwm/config.lua
+        \\    --config <PATH>     Use custom config file
+        \\    --version           Print version information
+        \\    --help              Print this help message
+        \\
+        \\CONFIG:
+        \\    Location: ~/.config/oxwm/config.lua
+        \\    Edit the config file and use Mod+Shift+R to reload
+        \\    No compilation needed - instant hot-reload!
+        \\
+        \\FIRST RUN:
+        \\    Run 'oxwm --init' to create a config file
+        \\    Or just start oxwm and it will create one automatically
+        \\
+    , .{});
+}
+
+fn init_config(allocator: std.mem.Allocator) void {
+    const home = std.posix.getenv("HOME") orelse {
+        std.debug.print("error: HOME environment variable not set\n", .{});
+        return;
+    };
+
+    var path_buf: [512]u8 = undefined;
+    const config_dir = std.fmt.bufPrint(&path_buf, "{s}/.config/oxwm", .{home}) catch {
+        std.debug.print("error: path too long\n", .{});
+        return;
+    };
+
+    std.fs.makeDirAbsolute(config_dir) catch |err| {
+        if (err != error.PathAlreadyExists) {
+            std.debug.print("error: could not create config directory: {}\n", .{err});
+            return;
+        }
+    };
+
+    var config_path_buf: [512]u8 = undefined;
+    const config_path = std.fmt.bufPrint(&config_path_buf, "{s}/config.lua", .{config_dir}) catch {
+        std.debug.print("error: path too long\n", .{});
+        return;
+    };
+
+    const template = std.fs.cwd().readFileAlloc(allocator, "templates/config.lua", 64 * 1024) catch |err| {
+        std.debug.print("error: could not read template (templates/config.lua): {}\n", .{err});
+        std.debug.print("hint: run from the oxwm source directory, or copy templates/config.lua manually\n", .{});
+        return;
+    };
+    defer allocator.free(template);
+
+    const file = std.fs.createFileAbsolute(config_path, .{}) catch |err| {
+        std.debug.print("error: could not create config file: {}\n", .{err});
+        return;
+    };
+    defer file.close();
+
+    _ = file.writeAll(template) catch |err| {
+        std.debug.print("error: could not write config file: {}\n", .{err});
+        return;
+    };
+
+    std.debug.print("Config created at {s}\n", .{config_path});
+    std.debug.print("Edit the file and reload with Mod+Shift+R\n", .{});
+    std.debug.print("No compilation needed - changes take effect immediately!\n", .{});
+}
+
 pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
@@ -80,7 +162,13 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--config")) {
             config_path = args.next();
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            std.debug.print("usage: oxwm [-c config.lua]\n", .{});
+            print_help();
+            return;
+        } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--version")) {
+            std.debug.print("oxwm 0.1.0\n", .{});
+            return;
+        } else if (std.mem.eql(u8, arg, "--init")) {
+            init_config(allocator);
             return;
         }
     }
@@ -140,6 +228,7 @@ pub fn main() !void {
 
     setup_monitors(&display);
     setup_bars(allocator, &display);
+    setup_overlay(allocator, &display);
     grab_keybinds(&display);
     scan_existing_windows(&display);
 
@@ -220,6 +309,10 @@ fn setup_bars(allocator: std.mem.Allocator, display: *Display) void {
         }
         current_monitor = monitor.next;
     }
+}
+
+fn setup_overlay(allocator: std.mem.Allocator, display: *Display) void {
+    keybind_overlay = overlay_mod.Keybind_Overlay.init(display.handle, display.screen, display.root, config.font, allocator);
 }
 
 fn config_block_to_bar_block(cfg: config_mod.Block) blocks_mod.Block {
@@ -335,41 +428,60 @@ fn apply_config_values() void {
     tags = config.tags;
 }
 
+fn make_keybind(mod: u32, key: u64, action: config_mod.Action) config_mod.Keybind {
+    var kb: config_mod.Keybind = .{ .action = action };
+    kb.keys[0] = .{ .mod_mask = mod, .keysym = key };
+    kb.key_count = 1;
+    return kb;
+}
+
+fn make_keybind_int(mod: u32, key: u64, action: config_mod.Action, int_arg: i32) config_mod.Keybind {
+    var kb = make_keybind(mod, key, action);
+    kb.int_arg = int_arg;
+    return kb;
+}
+
+fn make_keybind_str(mod: u32, key: u64, action: config_mod.Action, str_arg: []const u8) config_mod.Keybind {
+    var kb = make_keybind(mod, key, action);
+    kb.str_arg = str_arg;
+    return kb;
+}
+
 fn setup_default_keybinds() void {
     const mod_key: u32 = 1 << 6;
     const shift_key: u32 = 1 << 0;
     const control_key: u32 = 1 << 2;
 
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 0xff0d, .action = .spawn_terminal }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'd', .action = .spawn, .str_arg = "rofi -show drun" }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 's', .action = .spawn, .str_arg = "maim -s | xclip -selection clipboard -t image/png" }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'q', .action = .kill_client }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = 'q', .action = .quit }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = 'r', .action = .reload_config }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'j', .action = .focus_next }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'k', .action = .focus_prev }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = 'j', .action = .move_next }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = 'k', .action = .move_prev }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'h', .action = .resize_master, .int_arg = -50 }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'l', .action = .resize_master, .int_arg = 50 }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'i', .action = .inc_master }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'p', .action = .dec_master }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'a', .action = .toggle_gaps }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'f', .action = .toggle_fullscreen }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 0x0020, .action = .toggle_floating }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 'n', .action = .cycle_layout }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 0x002c, .action = .focus_monitor, .int_arg = -1 }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key, .keysym = 0x002e, .action = .focus_monitor, .int_arg = 1 }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = 0x002c, .action = .send_to_monitor, .int_arg = -1 }) catch {};
-    config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = 0x002e, .action = .send_to_monitor, .int_arg = 1 }) catch {};
+    config.add_keybind(make_keybind(mod_key, 0xff0d, .spawn_terminal)) catch {};
+    config.add_keybind(make_keybind_str(mod_key, 'd', .spawn, "rofi -show drun")) catch {};
+    config.add_keybind(make_keybind_str(mod_key, 's', .spawn, "maim -s | xclip -selection clipboard -t image/png")) catch {};
+    config.add_keybind(make_keybind(mod_key, 'q', .kill_client)) catch {};
+    config.add_keybind(make_keybind(mod_key | shift_key, 'q', .quit)) catch {};
+    config.add_keybind(make_keybind(mod_key | shift_key, 'r', .reload_config)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'j', .focus_next)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'k', .focus_prev)) catch {};
+    config.add_keybind(make_keybind(mod_key | shift_key, 'j', .move_next)) catch {};
+    config.add_keybind(make_keybind(mod_key | shift_key, 'k', .move_prev)) catch {};
+    config.add_keybind(make_keybind_int(mod_key, 'h', .resize_master, -50)) catch {};
+    config.add_keybind(make_keybind_int(mod_key, 'l', .resize_master, 50)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'i', .inc_master)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'p', .dec_master)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'a', .toggle_gaps)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'f', .toggle_fullscreen)) catch {};
+    config.add_keybind(make_keybind(mod_key, 0x0020, .toggle_floating)) catch {};
+    config.add_keybind(make_keybind(mod_key, 'n', .cycle_layout)) catch {};
+    config.add_keybind(make_keybind_int(mod_key, 0x002c, .focus_monitor, -1)) catch {};
+    config.add_keybind(make_keybind_int(mod_key, 0x002e, .focus_monitor, 1)) catch {};
+    config.add_keybind(make_keybind_int(mod_key | shift_key, 0x002c, .send_to_monitor, -1)) catch {};
+    config.add_keybind(make_keybind_int(mod_key | shift_key, 0x002e, .send_to_monitor, 1)) catch {};
 
     var tag_index: i32 = 0;
     while (tag_index < 9) : (tag_index += 1) {
         const keysym: u64 = @as(u64, '1') + @as(u64, @intCast(tag_index));
-        config.add_keybind(.{ .mod_mask = mod_key, .keysym = keysym, .action = .view_tag, .int_arg = tag_index }) catch {};
-        config.add_keybind(.{ .mod_mask = mod_key | shift_key, .keysym = keysym, .action = .move_to_tag, .int_arg = tag_index }) catch {};
-        config.add_keybind(.{ .mod_mask = mod_key | control_key, .keysym = keysym, .action = .toggle_view_tag, .int_arg = tag_index }) catch {};
-        config.add_keybind(.{ .mod_mask = mod_key | control_key | shift_key, .keysym = keysym, .action = .toggle_tag, .int_arg = tag_index }) catch {};
+        config.add_keybind(make_keybind_int(mod_key, keysym, .view_tag, tag_index)) catch {};
+        config.add_keybind(make_keybind_int(mod_key | shift_key, keysym, .move_to_tag, tag_index)) catch {};
+        config.add_keybind(make_keybind_int(mod_key | control_key, keysym, .toggle_view_tag, tag_index)) catch {};
+        config.add_keybind(make_keybind_int(mod_key | control_key | shift_key, keysym, .toggle_tag, tag_index)) catch {};
     }
 }
 
@@ -380,13 +492,15 @@ fn grab_keybinds(display: *Display) void {
     _ = xlib.XUngrabKey(display.handle, xlib.AnyKey, xlib.AnyModifier, display.root);
 
     for (config.keybinds.items) |keybind| {
-        const keycode = xlib.XKeysymToKeycode(display.handle, @intCast(keybind.keysym));
+        if (keybind.key_count == 0) continue;
+        const first_key = keybind.keys[0];
+        const keycode = xlib.XKeysymToKeycode(display.handle, @intCast(first_key.keysym));
         if (keycode != 0) {
             for (modifiers) |modifier| {
                 _ = xlib.XGrabKey(
                     display.handle,
                     keycode,
-                    keybind.mod_mask | modifier,
+                    first_key.mod_mask | modifier,
                     display.root,
                     xlib.True,
                     xlib.GrabModeAsync,
@@ -708,15 +822,94 @@ fn handle_configure_request(display: *Display, event: *xlib.XConfigureRequestEve
     _ = xlib.XSync(display.handle, xlib.False);
 }
 
+fn reset_chord_state() void {
+    chord_index = 0;
+    chord_keys = [_]config_mod.Key_Press{.{}} ** 4;
+    chord_timestamp = 0;
+    if (keyboard_grabbed) {
+        if (display_global) |dsp| {
+            _ = xlib.XUngrabKeyboard(dsp.handle, xlib.CurrentTime);
+        }
+        keyboard_grabbed = false;
+    }
+}
+
 fn handle_key_press(display: *Display, event: *xlib.XKeyEvent) void {
     const keysym = xlib.XKeycodeToKeysym(display.handle, @intCast(event.keycode), 0);
-    const clean_state = event.state & ~@as(c_uint, xlib.LockMask | xlib.Mod2Mask);
 
-    for (config.keybinds.items) |keybind| {
-        if (keysym == keybind.keysym and clean_state == keybind.mod_mask) {
-            execute_action(display, keybind.action, keybind.int_arg, keybind.str_arg);
+    if (keybind_overlay) |overlay| {
+        if (overlay.handle_key(keysym)) {
             return;
         }
+    }
+
+    const clean_state = event.state & ~@as(c_uint, xlib.LockMask | xlib.Mod2Mask);
+    const current_time = std.time.milliTimestamp();
+
+    if (chord_index > 0 and (current_time - chord_timestamp) > chord_timeout_ms) {
+        reset_chord_state();
+    }
+
+    chord_keys[chord_index] = .{ .mod_mask = clean_state, .keysym = keysym };
+    chord_index += 1;
+    chord_timestamp = current_time;
+
+    for (config.keybinds.items) |keybind| {
+        if (keybind.key_count == 0) continue;
+
+        if (keybind.key_count == chord_index) {
+            var matches = true;
+            var i: u8 = 0;
+            while (i < keybind.key_count) : (i += 1) {
+                if (chord_keys[i].keysym != keybind.keys[i].keysym or
+                    chord_keys[i].mod_mask != keybind.keys[i].mod_mask)
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                execute_action(display, keybind.action, keybind.int_arg, keybind.str_arg);
+                reset_chord_state();
+                return;
+            }
+        }
+    }
+
+    var has_partial_match = false;
+    for (config.keybinds.items) |keybind| {
+        if (keybind.key_count > chord_index) {
+            var matches = true;
+            var i: u8 = 0;
+            while (i < chord_index) : (i += 1) {
+                if (chord_keys[i].keysym != keybind.keys[i].keysym or
+                    chord_keys[i].mod_mask != keybind.keys[i].mod_mask)
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                has_partial_match = true;
+                break;
+            }
+        }
+    }
+
+    if (has_partial_match and !keyboard_grabbed) {
+        const grab_result = xlib.XGrabKeyboard(
+            display.handle,
+            display.root,
+            xlib.True,
+            xlib.GrabModeAsync,
+            xlib.GrabModeAsync,
+            xlib.CurrentTime,
+        );
+        if (grab_result == xlib.GrabSuccess) {
+            keyboard_grabbed = true;
+        }
+    } else if (!has_partial_match) {
+        reset_chord_state();
     }
 }
 
@@ -734,8 +927,15 @@ fn execute_action(display: *Display, action: config_mod.Action, int_arg: i32, st
             running = false;
         },
         .reload_config => reload_config(display),
-        .restart => {},
-        .show_keybinds => {},
+        .restart => reload_config(display),
+        .show_keybinds => {
+            if (keybind_overlay) |overlay| {
+                const mon = monitor_mod.selected_monitor orelse monitor_mod.monitors;
+                if (mon) |m| {
+                    overlay.toggle(m.mon_x, m.mon_y, m.mon_w, m.mon_h);
+                }
+            }
+        },
         .focus_next => focusstack(display, 1),
         .focus_prev => focusstack(display, -1),
         .move_next => movestack(display, 1),
@@ -748,8 +948,8 @@ fn execute_action(display: *Display, action: config_mod.Action, int_arg: i32, st
         .toggle_gaps => toggle_gaps(),
         .cycle_layout => cycle_layout(),
         .set_layout => set_layout(str_arg),
-        .set_layout_tiling => {},
-        .set_layout_floating => {},
+        .set_layout_tiling => set_layout_index(0),
+        .set_layout_floating => set_layout_index(2),
         .view_tag => {
             const tag_mask: u32 = @as(u32, 1) << @intCast(int_arg);
             view(display, tag_mask);
@@ -1320,6 +1520,20 @@ fn set_layout(layout_name: ?[]const u8) void {
     bar_mod.invalidate_bars();
     if (monitor.lt[monitor.sel_lt]) |layout| {
         std.debug.print("set_layout: {s}\n", .{layout.symbol});
+    }
+}
+
+fn set_layout_index(index: u32) void {
+    const monitor = monitor_mod.selected_monitor orelse return;
+    monitor.sel_lt = index;
+    monitor.pertag.sellts[monitor.pertag.curtag] = index;
+    if (index != 3) {
+        monitor.scroll_offset = 0;
+    }
+    arrange(monitor);
+    bar_mod.invalidate_bars();
+    if (monitor.lt[monitor.sel_lt]) |layout| {
+        std.debug.print("set_layout_index: {s}\n", .{layout.symbol});
     }
 }
 

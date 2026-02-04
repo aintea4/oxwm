@@ -1,5 +1,5 @@
 const std = @import("std");
-const config_mod = @import("config.zig");
+pub const config_mod = @import("config.zig");
 const Config = config_mod.Config;
 const Keybind = config_mod.Keybind;
 const Action = config_mod.Action;
@@ -392,19 +392,85 @@ fn lua_key_bind(state: ?*c.lua_State) callconv(.c) c_int {
     }
     c.lua_settop(s, -2);
 
-    cfg.add_keybind(.{
-        .mod_mask = mod_mask,
-        .keysym = keysym,
+    var keybind: config_mod.Keybind = .{
         .action = action,
         .int_arg = int_arg,
         .str_arg = str_arg,
-    }) catch return 0;
+    };
+    keybind.keys[0] = .{ .mod_mask = mod_mask, .keysym = keysym };
+    keybind.key_count = 1;
+
+    cfg.add_keybind(keybind) catch return 0;
 
     return 0;
 }
 
 fn lua_key_chord(state: ?*c.lua_State) callconv(.c) c_int {
-    _ = state;
+    const s = state orelse return 0;
+    const cfg = config orelse return 0;
+
+    if (c.lua_type(s, 1) != c.LUA_TTABLE) return 0;
+    if (c.lua_type(s, 2) != c.LUA_TTABLE) return 0;
+
+    var keybind: config_mod.Keybind = .{
+        .action = .quit,
+        .int_arg = 0,
+        .str_arg = null,
+    };
+    keybind.key_count = 0;
+
+    const num_keys = c.lua_rawlen(s, 1);
+    if (num_keys == 0 or num_keys > 4) return 0;
+
+    var i: usize = 1;
+    while (i <= num_keys) : (i += 1) {
+        _ = c.lua_rawgeti(s, 1, @intCast(i));
+        if (c.lua_type(s, -1) != c.LUA_TTABLE) {
+            c.lua_settop(s, -2);
+            return 0;
+        }
+
+        _ = c.lua_rawgeti(s, -1, 1);
+        const mod_mask = parse_modifiers_at_top(s);
+        c.lua_settop(s, -2);
+
+        _ = c.lua_rawgeti(s, -1, 2);
+        const key_str = get_lua_string(s, -1) orelse {
+            c.lua_settop(s, -3);
+            return 0;
+        };
+        c.lua_settop(s, -2);
+
+        const keysym = key_name_to_keysym(key_str) orelse {
+            c.lua_settop(s, -2);
+            return 0;
+        };
+
+        keybind.keys[keybind.key_count] = .{ .mod_mask = mod_mask, .keysym = keysym };
+        keybind.key_count += 1;
+
+        c.lua_settop(s, -2);
+    }
+
+    _ = c.lua_getfield(s, 2, "__action");
+    const action_str = get_lua_string(s, -1) orelse {
+        c.lua_settop(s, -2);
+        return 0;
+    };
+    c.lua_settop(s, -2);
+
+    keybind.action = parse_action(action_str) orelse return 0;
+
+    _ = c.lua_getfield(s, 2, "__arg");
+    if (c.lua_type(s, -1) == c.LUA_TNUMBER) {
+        keybind.int_arg = @intCast(c.lua_tointegerx(s, -1, null));
+    } else if (c.lua_type(s, -1) == c.LUA_TSTRING) {
+        keybind.str_arg = get_lua_string(s, -1);
+    }
+    c.lua_settop(s, -2);
+
+    cfg.add_keybind(keybind) catch return 0;
+
     return 0;
 }
 
@@ -532,7 +598,7 @@ fn lua_layout_scroll_right(state: ?*c.lua_State) callconv(.c) c_int {
 fn lua_tag_view(state: ?*c.lua_State) callconv(.c) c_int {
     const s = state orelse return 0;
     const idx: i32 = @intCast(c.lua_tointegerx(s, 1, null));
-    create_action_table_with_int(s, "ViewTag", idx - 1);
+    create_action_table_with_int(s, "ViewTag", idx);
     return 1;
 }
 
@@ -563,21 +629,21 @@ fn lua_tag_view_previous_nonempty(state: ?*c.lua_State) callconv(.c) c_int {
 fn lua_tag_toggleview(state: ?*c.lua_State) callconv(.c) c_int {
     const s = state orelse return 0;
     const idx: i32 = @intCast(c.lua_tointegerx(s, 1, null));
-    create_action_table_with_int(s, "ToggleView", idx - 1);
+    create_action_table_with_int(s, "ToggleView", idx);
     return 1;
 }
 
 fn lua_tag_move_to(state: ?*c.lua_State) callconv(.c) c_int {
     const s = state orelse return 0;
     const idx: i32 = @intCast(c.lua_tointegerx(s, 1, null));
-    create_action_table_with_int(s, "MoveToTag", idx - 1);
+    create_action_table_with_int(s, "MoveToTag", idx);
     return 1;
 }
 
 fn lua_tag_toggletag(state: ?*c.lua_State) callconv(.c) c_int {
     const s = state orelse return 0;
     const idx: i32 = @intCast(c.lua_tointegerx(s, 1, null));
-    create_action_table_with_int(s, "ToggleTag", idx - 1);
+    create_action_table_with_int(s, "ToggleTag", idx);
     return 1;
 }
 
@@ -1079,6 +1145,10 @@ fn parse_modifiers(state: *c.lua_State, idx: c_int) u32 {
     }
 
     return mod_mask;
+}
+
+fn parse_modifiers_at_top(state: *c.lua_State) u32 {
+    return parse_modifiers(state, -1);
 }
 
 fn parse_single_modifier(name: []const u8) u32 {

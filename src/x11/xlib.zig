@@ -252,6 +252,8 @@ pub const XGrabServer = c.XGrabServer;
 pub const XUngrabServer = c.XUngrabServer;
 pub const XUngrabButton = c.XUngrabButton;
 pub const XUngrabKey = c.XUngrabKey;
+pub const XGrabKeyboard = c.XGrabKeyboard;
+pub const XUngrabKeyboard = c.XUngrabKeyboard;
 pub const AnyKey = c.AnyKey;
 pub const AnyModifier = c.AnyModifier;
 

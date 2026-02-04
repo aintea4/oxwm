@@ -40,6 +40,22 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 
+    const lua_config_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/lua_config_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    lua_config_tests.root_module.addImport("lua", b.createModule(.{
+        .root_source_file = b.path("src/config/lua.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    lua_config_tests.linkSystemLibrary("lua");
+    lua_config_tests.linkLibC();
+    test_step.dependOn(&b.addRunArtifact(lua_config_tests).step);
+
     const xephyr_step = b.step("xephyr", "Run in Xephyr (1280x800 on :2)");
     xephyr_step.dependOn(&add_xephyr_run(b, exe, false).step);
 

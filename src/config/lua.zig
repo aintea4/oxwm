@@ -44,6 +44,16 @@ pub fn load_file(path: []const u8) bool {
     @memcpy(path_buf[0..path.len], path);
     path_buf[path.len] = 0;
 
+    if (std.mem.lastIndexOfScalar(u8, path, '/')) |last_slash| {
+        const dir = path[0..last_slash];
+        var setup_buf: [600]u8 = undefined;
+        const setup_code = std.fmt.bufPrint(&setup_buf, "package.path = '{s}/?.lua;' .. package.path\x00", .{dir}) catch return false;
+        if (c.luaL_loadstring(state, setup_code.ptr) != 0 or c.lua_pcallk(state, 0, 0, 0, 0, null) != 0) {
+            c.lua_settop(state, -2);
+            return false;
+        }
+    }
+
     if (c.luaL_loadfilex(state, &path_buf, null) != 0) {
         const err = c.lua_tolstring(state, -1, null);
         if (err != null) {
@@ -389,6 +399,8 @@ fn lua_key_bind(state: ?*c.lua_State) callconv(.c) c_int {
         int_arg = @intCast(c.lua_tointegerx(s, -1, null));
     } else if (c.lua_type(s, -1) == c.LUA_TSTRING) {
         str_arg = get_lua_string(s, -1);
+    } else if (c.lua_type(s, -1) == c.LUA_TTABLE) {
+        str_arg = extract_spawn_command(s, -1);
     }
     c.lua_settop(s, -2);
 
@@ -1097,6 +1109,35 @@ fn get_string_arg(state: *c.lua_State, idx: c_int) ?[]const u8 {
     return get_lua_string(state, idx);
 }
 
+fn extract_spawn_command(state: *c.lua_State, idx: c_int) ?[]const u8 {
+    const len = c.lua_rawlen(state, idx);
+    if (len == 0) return null;
+
+    if (len >= 3) {
+        _ = c.lua_rawgeti(state, idx, 1);
+        const first = get_lua_string(state, -1);
+        c.lua_settop(state, -2);
+
+        _ = c.lua_rawgeti(state, idx, 2);
+        const second = get_lua_string(state, -1);
+        c.lua_settop(state, -2);
+
+        if (first != null and second != null and
+            std.mem.eql(u8, first.?, "sh") and std.mem.eql(u8, second.?, "-c"))
+        {
+            _ = c.lua_rawgeti(state, idx, 3);
+            const cmd = get_lua_string(state, -1);
+            c.lua_settop(state, -2);
+            return cmd;
+        }
+    }
+
+    _ = c.lua_rawgeti(state, idx, 1);
+    const first_elem = get_lua_string(state, -1);
+    c.lua_settop(state, -2);
+    return first_elem;
+}
+
 fn get_lua_string(state: *c.lua_State, idx: c_int) ?[]const u8 {
     const cstr = c.lua_tolstring(state, idx, null);
     if (cstr == null) return null;
@@ -1139,7 +1180,8 @@ fn parse_modifiers(state: *c.lua_State, idx: c_int) u32 {
     while (i <= len) : (i += 1) {
         _ = c.lua_rawgeti(state, idx, @intCast(i));
         if (get_lua_string(state, -1)) |mod_str| {
-            mod_mask |= parse_single_modifier(mod_str);
+            const parsed = parse_single_modifier(mod_str);
+            mod_mask |= parsed;
         }
         c.lua_settop(state, -2);
     }

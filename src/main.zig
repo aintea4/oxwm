@@ -193,11 +193,11 @@ pub fn main() !void {
             apply_config_values();
         } else {
             std.debug.print("no config found, using defaults\n", .{});
-            setup_default_keybinds();
+            initialize_default_config();
         }
     } else {
         std.debug.print("failed to init lua, using defaults\n", .{});
-        setup_default_keybinds();
+        initialize_default_config();
     }
 
     var display = Display.open() catch |err| {
@@ -447,7 +447,7 @@ fn make_keybind_str(mod: u32, key: u64, action: config_mod.Action, str_arg: []co
     return kb;
 }
 
-fn setup_default_keybinds() void {
+fn initialize_default_config() void {
     const mod_key: u32 = 1 << 6;
     const shift_key: u32 = 1 << 0;
     const control_key: u32 = 1 << 2;
@@ -483,6 +483,9 @@ fn setup_default_keybinds() void {
         config.add_keybind(make_keybind_int(mod_key | control_key, keysym, .toggle_view_tag, tag_index)) catch {};
         config.add_keybind(make_keybind_int(mod_key | control_key | shift_key, keysym, .toggle_tag, tag_index)) catch {};
     }
+
+    config.add_button(.{ .click = .client_win, .mod_mask = mod_key, .button = 1, .action = .move_mouse }) catch {};
+    config.add_button(.{ .click = .client_win, .mod_mask = mod_key, .button = 3, .action = .resize_mouse }) catch {};
 }
 
 fn grab_keybinds(display: *Display) void {
@@ -987,6 +990,7 @@ fn reload_config(display: *Display) void {
     ungrab_keybinds(display);
 
     config.keybinds.clearRetainingCapacity();
+    config.buttons.clearRetainingCapacity();
     config.rules.clearRetainingCapacity();
     config.blocks.clearRetainingCapacity();
 
@@ -1007,7 +1011,7 @@ fn reload_config(display: *Display) void {
         apply_config_values();
     } else {
         std.debug.print("reload failed, restoring defaults\n", .{});
-        setup_default_keybinds();
+        initialize_default_config();
     }
 
     bar_mod.destroy_bars(gpa.allocator(), display.handle);

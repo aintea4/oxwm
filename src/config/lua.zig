@@ -997,6 +997,18 @@ fn lua_set_modkey(state: ?*c.lua_State) callconv(.c) c_int {
     const s = state orelse return 0;
     if (get_string_arg(s, 1)) |modkey_str| {
         cfg.modkey = parse_single_modifier(modkey_str);
+        cfg.add_button(.{
+            .click = .client_win,
+            .mod_mask = cfg.modkey,
+            .button = 1,
+            .action = .move_mouse,
+        }) catch {};
+        cfg.add_button(.{
+            .click = .client_win,
+            .mod_mask = cfg.modkey,
+            .button = 3,
+            .action = .resize_mouse,
+        }) catch {};
     }
     return 0;
 }

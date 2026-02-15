@@ -7,15 +7,6 @@ pub const Shell = @import("shell.zig").Shell;
 pub const Battery = @import("battery.zig").Battery;
 pub const Cpu_Temp = @import("cpu_temp.zig").Cpu_Temp;
 
-pub const Block_Type = enum {
-    static,
-    datetime,
-    ram,
-    shell,
-    battery,
-    cpu_temp,
-};
-
 pub const Block = struct {
     data: Data,
     last_update: i64,
@@ -23,7 +14,7 @@ pub const Block = struct {
     cached_len: usize,
     underline: bool,
 
-    pub const Data = union(Block_Type) {
+    pub const Data = union(enum) {
         static: Static,
         datetime: Date_Time,
         ram: Ram,

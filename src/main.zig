@@ -113,11 +113,9 @@ fn init_config(allocator: std.mem.Allocator) void {
         return;
     };
 
-    std.fs.makeDirAbsolute(config_dir) catch |err| {
-        if (err != error.PathAlreadyExists) {
-            std.debug.print("error: could not create config directory: {}\n", .{err});
-            return;
-        }
+    std.fs.cwd().makePath(config_dir) catch |err| {
+        std.debug.print("error: could not create config directory: {}\n", .{err});
+        return;
     };
 
     var config_path_buf: [512]u8 = undefined;

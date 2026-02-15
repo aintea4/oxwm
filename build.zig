@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    exe.linkSystemLibrary("lua");
+    exe.linkSystemLibrary("lua5.4");
     exe.linkSystemLibrary("X11");
     exe.linkSystemLibrary("Xinerama");
     exe.linkSystemLibrary("Xft");
@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }));
-    lua_config_tests.linkSystemLibrary("lua");
+    lua_config_tests.linkSystemLibrary("lua5.4");
     lua_config_tests.linkLibC();
     test_step.dependOn(&b.addRunArtifact(lua_config_tests).step);
 

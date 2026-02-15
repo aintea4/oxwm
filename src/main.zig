@@ -151,8 +151,6 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    std.debug.print("oxwm starting\n", .{});
-
     var config_path: ?[]const u8 = null;
     var args = std.process.args();
     _ = args.skip();
@@ -170,6 +168,8 @@ pub fn main() !void {
             return;
         }
     }
+
+    std.debug.print("oxwm starting\n", .{});
 
     config = config_mod.Config.init(allocator);
     defer config.deinit();
